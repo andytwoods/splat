@@ -1,3 +1,4 @@
+
 let cameras = [
     {
         id: 0,
@@ -296,6 +297,7 @@ function translate4(a, x, y, z) {
 }
 
 function createWorker(self) {
+
     let buffer;
     let vertexCount = 0;
     let viewProj;
@@ -345,16 +347,46 @@ function createWorker(self) {
         return (floatToHalf(x) | (floatToHalf(y) << 16)) >>> 0;
     }
 
+    let global_mod = 1;
     function generateTexture() {
         if (!buffer) return;
-        const f_buffer = new Float32Array(buffer);
-        const u_buffer = new Uint8Array(buffer);
+
+        let f_buffer = new Float32Array(buffer);
+        let u_buffer = new Uint8Array(buffer);
+
+        function f_fiddle(val){
+            return val// * ((global_mod + 9) / 10)
+        }
+        function u_fiddle(val){
+            return val //+ global_mod;
+        }
+
+        // AW: the map function just applies a function to each element in the list that is eg f_buffer. It's shorthand
+        // for something like this:
+        // for(var i=0; i<f_buffer.length;i++){
+        //     f_buffer[i] += global_mod
+        // }
+
+        f_buffer = f_buffer.map(f_fiddle);
+        u_buffer = u_buffer.map(u_fiddle);
 
         var texwidth = 1024 * 2; // Set to your desired width
         var texheight = Math.ceil((2 * vertexCount) / texwidth); // Set to your desired height
         var texdata = new Uint32Array(texwidth * texheight * 4); // 4 components per pixel (RGBA)
         var texdata_c = new Uint8Array(texdata.buffer);
         var texdata_f = new Float32Array(texdata.buffer);
+
+
+        function c_tex_fiddle(val){
+            return val// * ((global_mod + 9) / 10)
+        }
+        console.log(texdata_f)
+        function f_tex_fiddle(val){
+            return val //+ global_mod;
+        }
+        // AW: I don't know why the below is not working as expected
+        //texdata_c = texdata_c.map(c_tex_fiddle);
+        // texdata_f = texdata_f.map(f_tex_fiddle);
 
         // Here we convert from a .splat file buffer into a texture
         // With a little bit more foresight perhaps this texture file
@@ -633,6 +665,8 @@ function createWorker(self) {
     };
 
     let sortRunning;
+
+    // AW: here the worker receives the message.
     self.onmessage = (e) => {
         if (e.data.ply) {
             vertexCount = 0;
@@ -648,6 +682,12 @@ function createWorker(self) {
         } else if (e.data.view) {
             viewProj = e.data.view;
             throttledSort();
+        }
+        else if(e.data.mod){
+            // AW: here we add the value passed via the message to global_mod. We then call generateTexture to get it to
+            // process the raw splat again
+            global_mod += e.data.mod;
+            generateTexture();
         }
     };
 }
@@ -743,12 +783,13 @@ async function main() {
         viewMatrix = JSON.parse(decodeURIComponent(location.hash.slice(1)));
         carousel = false;
     } catch (err) {}
-    const url = new URL(
+    let url = new URL(
         // "nike.splat",
         // location.href,
         params.get("url") || "train.splat",
         "https://huggingface.co/cakewalk/splat-data/resolve/main/",
     );
+    // url = 'localhost:63342/splat/andy.splat'
     const req = await fetch(url, {
         mode: "cors", // no-cors, *cors, same-origin
         credentials: "omit", // include, *same-origin, omit
@@ -946,6 +987,16 @@ async function main() {
         } else if (e.code === "KeyP") {
             carousel = true;
             camid.innerText =""
+        }
+        else{
+            // AW: we listen for command or full-stop here. When detected we communicate with the worker sending it a
+            // message via that object.
+            if(e.code==="Comma"){
+                worker.postMessage({ mod: -1 });
+                }
+            if(e.code==="Period"){
+                worker.postMessage({ mod: 1 });
+            }
         }
     });
     window.addEventListener("keyup", (e) => {
