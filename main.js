@@ -367,8 +367,8 @@ function createWorker(self) {
         //     f_buffer[i] += global_mod
         // }
 
-        f_buffer = f_buffer.map(f_fiddle);
-        u_buffer = u_buffer.map(u_fiddle);
+        //f_buffer = f_buffer.map(f_fiddle);
+        //u_buffer = u_buffer.map(u_fiddle);
 
         var texwidth = 1024 * 2; // Set to your desired width
         var texheight = Math.ceil((2 * vertexCount) / texwidth); // Set to your desired height
@@ -380,13 +380,14 @@ function createWorker(self) {
         function c_tex_fiddle(val){
             return val// * ((global_mod + 9) / 10)
         }
-        console.log(texdata_f)
+
         function f_tex_fiddle(val){
             return val //+ global_mod;
         }
         // AW: I don't know why the below is not working as expected
-        //texdata_c = texdata_c.map(c_tex_fiddle);
-        // texdata_f = texdata_f.map(f_tex_fiddle);
+        //console.log(1, texdata_c)
+        //console.log(2, texdata_c)
+
 
         // Here we convert from a .splat file buffer into a texture
         // With a little bit more foresight perhaps this texture file
@@ -445,7 +446,6 @@ function createWorker(self) {
             texdata[8 * i + 5] = packHalf2x16(4 * sigma[2], 4 * sigma[3]);
             texdata[8 * i + 6] = packHalf2x16(4 * sigma[4], 4 * sigma[5]);
         }
-
         self.postMessage({ texdata, texwidth, texheight }, [texdata.buffer]);
     }
 
@@ -692,15 +692,21 @@ function createWorker(self) {
     };
 }
 
+
+// per point operations (per vertex)
 const vertexShaderSource = `
 #version 300 es
 precision highp float;
 precision highp int;
 
+// uniform = mechanism to input
 uniform highp usampler2D u_texture;
 uniform mat4 projection, view;
 uniform vec2 focal;
 uniform vec2 viewport;
+
+uniform float time; // Uniform to represent the elapsed time
+uniform vec3 live_colour;
 
 in vec2 position;
 in int index;
@@ -741,21 +747,52 @@ void main () {
     vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
     vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
 
+ // Calculate the explosion effect
+    float explosionFactor = time; // Scale this factor to control explosion speed
+    
+    vec3 explosionDirection = normalize(vec3(position, 1.0));
+    vec4 displacedPosition = cam + vec4(explosionDirection * explosionFactor, 0.0);
+
+    //vColor = clamp(pos2d.z/pos2d.w+1.0, 0.0, 1.0) * vec4((cov.w) & 0xffu, (cov.w >> 8) & 0xffu, (cov.w >> 16) & 0xffu, (cov.w >> 24) & 0xffu) *live_colour[0] / 255.0;
     vColor = clamp(pos2d.z/pos2d.w+1.0, 0.0, 1.0) * vec4((cov.w) & 0xffu, (cov.w >> 8) & 0xffu, (cov.w >> 16) & 0xffu, (cov.w >> 24) & 0xffu) / 255.0;
+    
     vPosition = position;
+    
+    //if(pos2d.z > live_colour[0]) return;
+    //if(pos2d.x > live_colour[1]) return;
+    
+    float mod = 1.0;
+    
+    if(pos2d.z > 3.0 || pos2d.z < 2.0 || pos2d.x > 2.0 || pos2d.x < 0.51){ 
+
+     vColor = clamp(pos2d.z/pos2d.w+1.0, 0.0, 1.0) * vec4((cov.w) & 0xffu, (cov.w >> 8) & 0xffu, (cov.w >> 16) & 0xffu, (cov.w >> 24) & 0xffu) * 2.0 / 255.0;
+    }
 
     vec2 vCenter = vec2(pos2d) / pos2d.w;
     gl_Position = vec4(
         vCenter 
-        + position.x * majorAxis / viewport 
-        + position.y * minorAxis / viewport, 0.0, 1.0);
+        //+ position.x * majorAxis / viewport *live_colour[1]
+        + position.x * majorAxis / viewport
+        + position.y * mod * minorAxis / viewport, 0.0, 1.0);
+        
+    // Apply the displacement to the final position
+    //gl_Position = projection * displacedPosition;
 
 }
 `.trim();
 
+// in between, more shaders. more advanced
+// geometry shader (triangles) -- 3 vertices that make up each triangle
+
+// others are not available in webgl
+
+
+// pixels. Just colour
 const fragmentShaderSource = `
 #version 300 es
 precision highp float;
+
+uniform vec3 live_colour;
 
 in vec4 vColor;
 in vec2 vPosition;
@@ -766,7 +803,11 @@ void main () {
     float A = -dot(vPosition, vPosition);
     if (A < -4.0) discard;
     float B = exp(A) * vColor.a;
-    fragColor = vec4(B * vColor.rgb, B);
+    float originalZ = gl_FragCoord.z / gl_FragCoord.w;
+    vec3 live_colour_pos = vec3(live_colour[0], live_colour[1]*A, live_colour[2]);
+    fragColor = vec4(B * vColor.rgb , B);
+    // AW
+    //fragColor = vec4(B * vColor.rgb * live_colour_pos, B);
 }
 
 `.trim();
@@ -777,6 +818,9 @@ let defaultViewMatrix = [
 ];
 let viewMatrix = defaultViewMatrix;
 async function main() {
+
+    let startTime = Date.now();
+
     let carousel = true;
     const params = new URLSearchParams(location.search);
     try {
@@ -862,6 +906,10 @@ async function main() {
     const u_focal = gl.getUniformLocation(program, "focal");
     const u_view = gl.getUniformLocation(program, "view");
 
+    const scooby = gl.getUniformLocation(program, "scooby");
+    const u_time = gl.getUniformLocation(program, "time");
+    const u_livecolour = gl.getUniformLocation(program, "live_colour");
+
     // positions
     const triangleVertices = new Float32Array([-2, -2, 2, -2, 2, 2, -2, 2]);
     const vertexBuffer = gl.createBuffer();
@@ -876,7 +924,7 @@ async function main() {
     gl.bindTexture(gl.TEXTURE_2D, texture);
 
     var u_textureLocation = gl.getUniformLocation(program, "u_texture");
-    gl.uniform1i(u_textureLocation, 0);
+    gl.uniform1i(u_textureLocation, 0); // specifying the defaults here
 
     const indexBuffer = gl.createBuffer();
     const a_index = gl.getAttribLocation(program, "index");
@@ -961,7 +1009,7 @@ async function main() {
 
     window.addEventListener("keydown", (e) => {
         // if (document.activeElement != document.body) return;
-        carousel = false;
+        // carousel = false;
         if (!activeKeys.includes(e.code)) activeKeys.push(e.code);
         if (/\d/.test(e.key)) {
             currentCameraIndex = parseInt(e.key)
@@ -992,13 +1040,18 @@ async function main() {
             // AW: we listen for command or full-stop here. When detected we communicate with the worker sending it a
             // message via that object.
             if(e.code==="Comma"){
-                worker.postMessage({ mod: -1 });
-                }
+                scooby_score -=1
+                gl.uniform1f(scooby, scooby_score);
+            }
             if(e.code==="Period"){
-                worker.postMessage({ mod: 1 });
+                scooby_score +=1
+                gl.uniform1f(scooby, scooby_score);
             }
         }
     });
+
+    let scooby_score = 0;
+
     window.addEventListener("keyup", (e) => {
         activeKeys = activeKeys.filter((k) => k !== e.code);
     });
@@ -1067,6 +1120,8 @@ async function main() {
     });
 
     canvas.addEventListener("mousemove", (e) => {
+        mouse_x = e.clientX;
+        mouse_y = e.clientY;
         e.preventDefault();
         if (down == 1) {
             let inv = invert4(viewMatrix);
@@ -1401,6 +1456,18 @@ async function main() {
         if (isNaN(currentCameraIndex)){
             camid.innerText = "";
         }
+
+        let elapsedTime = (Date.now() - startTime) / 1000; // Time in seconds
+        elapsedTime /= 10 // slow things down a bit
+
+        if(elapsedTime > 1) startTime = Date.now();
+
+        gl.getUniformLocation(program, "projection");
+
+        gl.uniform1f(u_time, elapsedTime);
+        const mouse_pos = get_mouse_pos();
+        gl.uniform3f(u_livecolour, mouse_pos[0], mouse_pos[1], mouse_pos[2]);
+
         lastFrame = now;
         requestAnimationFrame(frame);
     };
@@ -1499,3 +1566,19 @@ main().catch((err) => {
     document.getElementById("spinner").style.display = "none";
     document.getElementById("message").innerText = err.toString();
 });
+
+
+let mouse_x = 1;
+let mouse_y = 1;
+function get_mouse_pos(){
+    let windowHeight = window.innerHeight
+    let windowWidth = window.innerWidth
+
+
+    // let mousePosX = -1+(mouse_x/windowWidth)*2 * 2;
+    // let mousePosY = 1-(mouse_y/windowHeight)*2 * 2; // nb last *2 so we range from -2 to +2
+
+    let mousePosX = Math.log(mouse_x)
+    let mousePosY = Math.log(mouse_y)
+    return [mousePosX,mousePosY,1]
+}
