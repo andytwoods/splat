@@ -767,10 +767,18 @@ void main () {
 
      vColor = clamp(pos2d.z/pos2d.w+1.0, 0.0, 1.0) * vec4((cov.w) & 0xffu, (cov.w >> 8) & 0xffu, (cov.w >> 16) & 0xffu, (cov.w >> 24) & 0xffu) * 2.0 / 255.0;
     }
+    
+    float y_mod = 0.0;
+    float x_mod = 0.0;
+    if(pos2d.x <0.0){
+        //y_mod += sin(pos2d.x*.2 * time);
+        x_mod += displacedPosition[0] * 0.1;
+        y_mod += displacedPosition[1] * 0.1;
+    }
 
-    vec2 vCenter = vec2(pos2d) / pos2d.w;
+    vec2 vCenter = vec2(pos2d) / pos2d.w +vec2(x_mod, y_mod);
     gl_Position = vec4(
-        vCenter 
+        vCenter
         //+ position.x * majorAxis / viewport *live_colour[1]
         + position.x * majorAxis / viewport
         + position.y * mod * minorAxis / viewport, 0.0, 1.0);
@@ -833,6 +841,8 @@ async function main() {
         params.get("url") || "train.splat",
         "https://huggingface.co/cakewalk/splat-data/resolve/main/",
     );
+
+    console.log(url)
     // url = 'localhost:63342/splat/andy.splat'
     const req = await fetch(url, {
         mode: "cors", // no-cors, *cors, same-origin

@@ -56,21 +56,12 @@ def save_splat_file(splat_data, output_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert PLY files to SPLAT format.")
-    parser.add_argument(
-        "input_files", nargs="+", help="The input PLY files to process."
-    )
-    parser.add_argument(
-        "--output", "-o", default="output.splat", help="The output SPLAT file."
-    )
-    args = parser.parse_args()
-    for input_file in args.input_files:
+
+    for input_file in ['kitchen.ply',]:
         print(f"Processing {input_file}...")
         splat_data = process_ply_to_splat(input_file)
-        output_file = (
-            args.output if len(args.input_files) == 1 else input_file + ".splat"
-        )
-        save_splat_file(splat_data, output_file)
+
+        save_splat_file(splat_data, 'kitchen.splat')
         print(f"Saved {output_file}")
 
 
